@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Poker Engine</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js');
+        }
+    </script>
+</head>
+<body>
+    <div class="login-container">
+        <img src="/static/img/rankings.png" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%;" />
+        <h1>Poker Table</h1>
+        <input type="text" id="playerName" class="login-input" placeholder="Your Name">
+        
+        <div style="display:flex; gap: 10px; width: 80%; max-width: 300px;">
+            <button onclick="createRoom()" class="login-btn" style="flex:1;">Create Room</button>
+        </div>
+        
+        <div style="margin-top:20px; width: 80%; max-width: 300px; display:flex; gap:10px;">
+            <input type="number" id="roomCode" class="login-input" placeholder="Code" style="width: 100px;">
+            <button onclick="joinRoom()" class="login-btn" style="background:#2196F3; flex:1;">Join</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        function createRoom() {
+            const name = document.getElementById('playerName').value;
+            if (name.trim()) socket.emit('create_room', { name });
+        }
+
+        function joinRoom() {
+            const name = document.getElementById('playerName').value;
+            const code = document.getElementById('roomCode').value;
+            if (name.trim() && code.trim()) socket.emit('join_room', { name, code });
+        }
+
+        socket.on('room_joined', (data) => {
+            localStorage.setItem('pokerCode', data.code);
+            localStorage.setItem('pokerHost', data.is_host);
+            window.location.href = '/player';
+        });
+
+        socket.on('error', (data) => alert(data.msg));
+    </script>
+</body>
+</html>

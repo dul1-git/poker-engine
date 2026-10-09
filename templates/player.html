@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Poker Player View</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+</head>
+<body>
+    <div class="container" style="padding-bottom: 150px;">
+        <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <div style="font-size: 0.9rem; color:#888;">Room: <span id="roomCodeDisplay"></span></div>
+                <h1 id="myName" style="margin:0;">Loading...</h1>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size: 2rem; font-weight: bold; color: #4CAF50;" id="myChips">0</div>
+                <div>Chips</div>
+            </div>
+            <button onclick="showRankings()" style="background:#555; border:none; border-radius:50%; width:30px; height:30px; color:white; font-weight:bold;">?</button>
+        </div>
+
+        <div class="game-info">
+            <div>Pot: <span class="pot" id="mainPot">0</span></div>
+            <div>Phase: <span id="gamePhase" style="color: #ff9800;">waiting</span></div>
+            <div>To Call: <span id="toCall" style="color: #ff9800;">0</span></div>
+        </div>
+
+        <div id="hostControls" style="display:none; background:#9c27b033; padding:10px; border-radius:8px; margin-bottom:10px; border:1px solid #9c27b0;">
+            <h3 style="color:#e1bee7; margin-bottom:10px;">Host Controls</h3>
+            <div style="display:flex; gap:10px;">
+                <button class="dealer-btn" onclick="hostAction('start_hand')" style="flex:1; padding:10px;">Start Hand</button>
+                <button class="dealer-btn" onclick="hostAction('end_hand')" style="flex:1; padding:10px; background:#f44336;">End Hand</button>
+            </div>
+            <div id="winnerSelectDiv" style="display:none; margin-top:10px;">
+                <select id="winnerSelect" class="winner-select" multiple size="3" style="background:#222; color:white; border:1px solid #555;"></select>
+                <button class="dealer-btn" style="width:100%; padding:10px; background:#4CAF50;" onclick="awardPot()">Award Pot</button>
+            </div>
+        </div>
+
+        <div class="players-list" id="playersList"></div>
+    </div>
+
+    <div class="action-bar" id="actionBar" style="display: none;">
+        <div class="raise-container" id="raiseControls" style="display: none; width: 100%;">
+            <input type="number" id="raiseAmount" class="raise-input" placeholder="Amount">
+            <button class="action-btn btn-raise" onclick="sendAction('raise')">Raise</button>
+            <button class="action-btn" style="background: #555; flex: 0.5;" onclick="toggleRaise(false)">X</button>
+        </div>
+        <div id="mainControls" style="display: flex; width: 100%; gap: 0.5rem;">
+            <button class="action-btn btn-fold" onclick="sendAction('fold')">Fold</button>
+            <button class="action-btn btn-check" id="checkCallBtn" onclick="sendAction('call')">Call</button>
+            <button class="action-btn btn-raise" onclick="toggleRaise(true)">Raise</button>
+        </div>
+    </div>
+
+    <div id="rankingsModal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.9); z-index:100; justify-content:center; align-items:center;">
+        <div style="position:relative; width:90%; max-width:600px;">
+            <button onclick="hideRankings()" style="position:absolute; top:-40px; right:0; background:none; border:none; color:white; font-size:2rem;">&times;</button>
+            <img src="/static/img/rankings.png" style="width:100%; border-radius:8px;">
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const code = localStorage.getItem('pokerCode');
+        const isHost = localStorage.getItem('pokerHost') === 'true';
+        
+        if (!code) window.location.href = '/';
+        document.getElementById('roomCodeDisplay').innerText = code;
+        
+        if (isHost) {
+            document.getElementById('hostControls').style.display = 'block';
+        }
+
+        socket.on('connect', () => {
+            // Rejoin logic handled by user re-entering name in a real app, 
+            // but here we assume no disconnects for simplicity, or they hit index again.
+        });
+
+        let myBetAmount = 0;
+        let gameData = null;
+
+        socket.on('game_update', (data) => {
+            gameData = data;
+            const sid = socket.id;
+            const me = data.players[sid];
+            if (!me) return;
+
+            document.getElementById('myName').innerText = me.name + (isHost ? ' (Host)' : '');
+            document.getElementById('myChips').innerText = me.chips;
+            document.getElementById('mainPot').innerText = data.pot;
+            document.getElementById('gamePhase').innerText = data.phase;
+            
+            const toCall = Math.max(0, data.current_bet - me.bet);
+            myBetAmount = me.bet;
+            document.getElementById('toCall').innerText = toCall;
+
+            if (isHost && data.phase === 'end') {
+                document.getElementById('winnerSelectDiv').style.display = 'block';
+                populateWinnerSelect(data);
+            } else {
+                document.getElementById('winnerSelectDiv').style.display = 'none';
+            }
+
+            const list = document.getElementById('playersList');
+            list.innerHTML = '';
+            
+            data.player_order.forEach(id => {
+                const p = data.players[id];
+                if(!p) return;
+                const div = document.createElement('div');
+                div.className = `player-item ${p.is_turn ? 'is-turn' : ''} ${p.status === 'folded' ? 'folded' : ''}`;
+                
+                div.innerHTML = `
+                    <div class="player-info">
+                        <span class="player-name">${p.name} ${data.player_order[data.dealer_idx] === id ? '(D)' : ''}</span>
+                        <span>Chips: ${p.chips} | Status: ${p.status}</span>
+                    </div>
+                    <div class="player-bet">Bet: ${p.bet}</div>
+                `;
+                list.appendChild(div);
+            });
+
+            const actionBar = document.getElementById('actionBar');
+            if (me.is_turn && data.phase !== 'waiting' && data.phase !== 'end') {
+                actionBar.style.display = 'flex';
+                const checkCallBtn = document.getElementById('checkCallBtn');
+                if (toCall === 0) {
+                    checkCallBtn.innerText = 'Check';
+                    checkCallBtn.onclick = () => sendAction('check');
+                } else {
+                    checkCallBtn.innerText = `Call ${toCall}`;
+                    checkCallBtn.onclick = () => sendAction('call');
+                }
+            } else {
+                actionBar.style.display = 'none';
+                toggleRaise(false);
+            }
+        });
+
+        function populateWinnerSelect(data) {
+            const select = document.getElementById('winnerSelect');
+            select.innerHTML = '';
+            data.player_order.forEach(id => {
+                const p = data.players[id];
+                if(p && p.status !== 'folded' && p.total_invested > 0) {
+                    const opt = document.createElement('option');
+                    opt.value = id;
+                    opt.text = `${p.name} (Invested: ${p.total_invested})`;
+                    select.appendChild(opt);
+                }
+            });
+        }
+
+        function toggleRaise(show) {
+            document.getElementById('mainControls').style.display = show ? 'none' : 'flex';
+            document.getElementById('raiseControls').style.display = show ? 'flex' : 'none';
+        }
+
+        function sendAction(action) {
+            const payload = { action };
+            if (action === 'raise') {
+                const val = parseInt(document.getElementById('raiseAmount').value);
+                if (!val || val <= myBetAmount) return alert('Invalid raise amount');
+                payload.amount = val;
+            }
+            socket.emit('action', payload);
+            toggleRaise(false);
+        }
+
+        function hostAction(action) {
+            socket.emit('host_action', { action });
+        }
+        
+        function awardPot() {
+            const select = document.getElementById('winnerSelect');
+            const winners = Array.from(select.selectedOptions).map(o => o.value);
+            if (winners.length === 0) return alert('Select at least one winner');
+            socket.emit('host_action', { action: 'award_pot', winners });
+        }
+
+        function showRankings() { document.getElementById('rankingsModal').style.display = 'flex'; }
+        function hideRankings() { document.getElementById('rankingsModal').style.display = 'none'; }
+    </script>
+</body>
+</html>
